@@ -1,12 +1,20 @@
 // Copyright 2014 BitPay Inc.
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://opensource.org/licenses/mit-license.php.
 
 #include <string.h>
 #include <vector>
 #include <stdio.h>
 #include "univalue.h"
 #include "univalue_utffilter.h"
+
+/*
+ * According to stackexchange, the original json test suite wanted
+ * to limit depth to 22.  Widely-deployed PHP bails at depth 512,
+ * so we will follow PHP's lead, which should be more than sufficient
+ * (further stackexchange comments indicate depth > 32 rarely occurs).
+ */
+static const size_t MAX_JSON_DEPTH = 512;
 
 static bool json_isdigit(int ch)
 {
@@ -219,7 +227,7 @@ enum jtokentype getJsonToken(std::string& tokenVal, unsigned int& consumed,
             }
 
             else {
-                writer.push_back(*raw);
+                writer.push_back(static_cast<unsigned char>(*raw));
                 raw++;
             }
         }
@@ -236,7 +244,7 @@ enum jtokentype getJsonToken(std::string& tokenVal, unsigned int& consumed,
     }
 }
 
-enum expect_bits {
+enum expect_bits : unsigned {
     EXP_OBJ_NAME = (1U << 0),
     EXP_COLON = (1U << 1),
     EXP_ARR_VALUE = (1U << 2),
@@ -322,6 +330,9 @@ bool UniValue::read(const char *raw, size_t size)
                 UniValue *newTop = &(top->values.back());
                 stack.push_back(newTop);
             }
+
+            if (stack.size() > MAX_JSON_DEPTH)
+                return false;
 
             if (utyp == VOBJ)
                 setExpect(OBJ_NAME);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2019 The Bitcoin Core developers
+# Copyright (c) 2014-2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Run regression test suite.
@@ -20,11 +20,12 @@ import os
 import time
 import shutil
 import signal
-import sys
 import subprocess
+import sys
 import tempfile
 import re
 import logging
+import unittest
 
 # Formatting. Default colors to empty strings.
 BOLD, GREEN, RED, GREY = ("", ""), ("", ""), ("", ""), ("", "")
@@ -39,10 +40,10 @@ except UnicodeDecodeError:
     CROSS = "x "
     CIRCLE = "o "
 
-if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393):
+if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393): #type:ignore
     if os.name == 'nt':
         import ctypes
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.windll.kernel32  # type: ignore
         ENABLE_VIRTUAL_TERMINAL_PROCESSING = 4
         STD_OUTPUT_HANDLE = -11
         STD_ERROR_HANDLE = -12
@@ -66,81 +67,139 @@ if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393):
 TEST_EXIT_PASSED = 0
 TEST_EXIT_SKIPPED = 77
 
+TEST_FRAMEWORK_MODULES = [
+    "address",
+    "blocktools",
+    "muhash",
+    "key",
+    "script",
+    "segwit_addr",
+    "util",
+]
+
 EXTENDED_SCRIPTS = [
-    # These tests are not run by the travis build process.
+    # These tests are not run by default.
     # Longest test should go first, to favor running tests in parallel
     'feature_pruning.py',
     'feature_dbcrash.py',
 ]
 
 BASE_SCRIPTS = [
-    # Scripts that are run by the travis build process.
+    # Scripts that are run by default.
     # Longest test should go first, to favor running tests in parallel
-    'feature_fee_estimation.py',
-    'wallet_hd.py',
-    'wallet_backup.py',
+    'wallet_hd.py --legacy-wallet',
+    'wallet_hd.py --descriptors',
+    'wallet_backup.py --legacy-wallet',
+    'wallet_backup.py --descriptors',
     # vv Tests less than 5m vv
     'mining_getblocktemplate_longpoll.py',
     'feature_maxuploadtarget.py',
     'feature_block.py',
-    'rpc_fundrawtransaction.py',
+    'rpc_fundrawtransaction.py --legacy-wallet',
+    'rpc_fundrawtransaction.py --descriptors',
     'p2p_compactblocks.py',
-    'feature_segwit.py',
+    'p2p_compactblocks_blocksonly.py',
+    'feature_segwit.py --legacy-wallet',
+    'feature_segwit.py --descriptors',
     # vv Tests less than 2m vv
-    'wallet_basic.py',
-    'wallet_labels.py',
+    'wallet_basic.py --legacy-wallet',
+    'wallet_basic.py --descriptors',
+    'wallet_labels.py --legacy-wallet',
+    'wallet_labels.py --descriptors',
     'p2p_segwit.py',
     'p2p_timeouts.py',
-    'wallet_dump.py',
-    'wallet_listtransactions.py',
+    'p2p_tx_download.py',
+    'mempool_updatefromblock.py',
+    'wallet_dump.py --legacy-wallet',
+    'feature_taproot.py --previous_release',
+    'feature_taproot.py',
+    'rpc_signer.py',
+    'wallet_signer.py --descriptors',
     # vv Tests less than 60s vv
     'p2p_sendheaders.py',
-    'wallet_zapwallettxes.py',
-    'wallet_importmulti.py',
+    'wallet_importmulti.py --legacy-wallet',
     'mempool_limit.py',
     'rpc_txoutproof.py',
-    'wallet_listreceivedby.py',
-    'wallet_abandonconflict.py',
+    'wallet_listreceivedby.py --legacy-wallet',
+    'wallet_listreceivedby.py --descriptors',
+    'wallet_abandonconflict.py --legacy-wallet',
+    'p2p_dns_seeds.py',
+    'wallet_abandonconflict.py --descriptors',
     'feature_csv_activation.py',
-    'rpc_rawtransaction.py',
-    'wallet_address_types.py',
+    'wallet_address_types.py --legacy-wallet',
+    'wallet_address_types.py --descriptors',
     'feature_bip68_sequence.py',
     'p2p_feefilter.py',
     'feature_reindex.py',
+    'feature_abortnode.py',
     # vv Tests less than 30s vv
-    'wallet_keypool_topup.py',
+    'wallet_keypool_topup.py --legacy-wallet',
+    'wallet_keypool_topup.py --descriptors',
+    'feature_fee_estimation.py',
     'interface_zmq.py',
+    'rpc_invalid_address_message.py',
     'interface_bitcoin_cli.py',
+    'feature_bind_extra.py',
     'mempool_resurrect.py',
     'wallet_txn_doublespend.py --mineblock',
-    'tool_wallet.py',
+    'tool_wallet.py --legacy-wallet',
+    'tool_wallet.py --descriptors',
     'wallet_txn_clone.py',
     'wallet_txn_clone.py --segwit',
     'rpc_getchaintips.py',
     'rpc_misc.py',
     'interface_rest.py',
     'mempool_spend_coinbase.py',
+    'wallet_avoidreuse.py --legacy-wallet',
+    'wallet_avoidreuse.py --descriptors',
     'mempool_reorg.py',
     'mempool_persist.py',
-    'wallet_multiwallet.py',
+    'wallet_multiwallet.py --legacy-wallet',
+    'wallet_multiwallet.py --descriptors',
     'wallet_multiwallet.py --usecli',
-    'wallet_createwallet.py',
+    'wallet_createwallet.py --legacy-wallet',
     'wallet_createwallet.py --usecli',
+    'wallet_createwallet.py --descriptors',
+    'wallet_listtransactions.py --legacy-wallet',
+    'wallet_listtransactions.py --descriptors',
+    'wallet_watchonly.py --legacy-wallet',
+    'wallet_watchonly.py --usecli --legacy-wallet',
+    'wallet_reorgsrestore.py',
     'interface_http.py',
     'interface_rpc.py',
-    'rpc_psbt.py',
+    'rpc_psbt.py --legacy-wallet',
+    'rpc_psbt.py --descriptors',
     'rpc_users.py',
+    'rpc_whitelist.py',
     'feature_proxy.py',
-    'rpc_signrawtransaction.py',
-    'wallet_groups.py',
+    'feature_syscall_sandbox.py',
+    'rpc_signrawtransaction.py --legacy-wallet',
+    'rpc_signrawtransaction.py --descriptors',
+    'rpc_rawtransaction.py --legacy-wallet',
+    'rpc_rawtransaction.py --descriptors',
+    'wallet_groups.py --legacy-wallet',
+    'wallet_transactiontime_rescan.py',
+    'p2p_addrv2_relay.py',
+    'wallet_groups.py --descriptors',
+    'p2p_compactblocks_hb.py',
     'p2p_disconnect_ban.py',
     'rpc_decodescript.py',
     'rpc_blockchain.py',
     'rpc_deprecated.py',
-    'wallet_disable.py',
+    'wallet_disable.py --legacy-wallet',
+    'wallet_disable.py --descriptors',
+    'p2p_addr_relay.py',
+    'p2p_getaddr_caching.py',
+    'p2p_getdata.py',
+    'p2p_addrfetch.py',
     'rpc_net.py',
-    'wallet_keypool.py',
-    'p2p_mempool.py',
+    'wallet_keypool.py --legacy-wallet',
+    'wallet_keypool.py --descriptors',
+    'wallet_descriptor.py --descriptors',
+    'p2p_nobloomfilter_messages.py',
+    'p2p_filter.py',
+    'rpc_setban.py',
+    'p2p_blocksonly.py',
     'mining_prioritisetransaction.py',
     'p2p_invalid_locator.py',
     'p2p_invalid_block.py',
@@ -148,57 +207,113 @@ BASE_SCRIPTS = [
     'p2p_invalid_tx.py',
     'feature_assumevalid.py',
     'example_test.py',
-    'wallet_txn_doublespend.py',
+    'wallet_txn_doublespend.py --legacy-wallet',
+    'wallet_multisig_descriptor_psbt.py',
+    'wallet_txn_doublespend.py --descriptors',
+    'feature_backwards_compatibility.py --legacy-wallet',
+    'feature_backwards_compatibility.py --descriptors',
     'wallet_txn_clone.py --mineblock',
     'feature_notifications.py',
     'rpc_getblockfilter.py',
     'rpc_invalidateblock.py',
+    'feature_utxo_set_hash.py',
     'feature_rbf.py',
     'mempool_packages.py',
-    'rpc_createmultisig.py',
+    'mempool_package_onemore.py',
+    'rpc_createmultisig.py --legacy-wallet',
+    'rpc_createmultisig.py --descriptors',
+    'rpc_packages.py',
+    'mempool_package_limits.py',
     'feature_versionbits_warning.py',
     'rpc_preciousblock.py',
-    'wallet_importprunedfunds.py',
+    'wallet_importprunedfunds.py --legacy-wallet',
+    'wallet_importprunedfunds.py --descriptors',
     'p2p_leak_tx.py',
-    'rpc_signmessage.py',
-    'wallet_balance.py',
-    'feature_nulldummy.py',
+    'p2p_eviction.py',
+    'wallet_signmessagewithaddress.py',
+    'rpc_signmessagewithprivkey.py',
+    'rpc_generateblock.py',
+    'rpc_generate.py',
+    'wallet_balance.py --legacy-wallet',
+    'wallet_balance.py --descriptors',
+    'feature_nulldummy.py --legacy-wallet',
+    'feature_nulldummy.py --descriptors',
     'mempool_accept.py',
-    'wallet_import_rescan.py',
-    'wallet_import_with_label.py',
+    'mempool_expiry.py',
+    'wallet_import_rescan.py --legacy-wallet',
+    'wallet_import_with_label.py --legacy-wallet',
+    'wallet_importdescriptors.py --descriptors',
+    'wallet_upgradewallet.py --legacy-wallet',
     'rpc_bind.py --ipv4',
     'rpc_bind.py --ipv6',
     'rpc_bind.py --nonloopback',
     'mining_basic.py',
-    'wallet_bumpfee.py',
+    'feature_signet.py',
+    'wallet_bumpfee.py --legacy-wallet',
+    'wallet_bumpfee.py --descriptors',
+    'wallet_implicitsegwit.py --legacy-wallet',
     'rpc_named_arguments.py',
-    'wallet_listsinceblock.py',
+    'wallet_listsinceblock.py --legacy-wallet',
+    'wallet_listsinceblock.py --descriptors',
+    'wallet_listdescriptors.py --descriptors',
     'p2p_leak.py',
-    'wallet_encryption.py',
+    'wallet_encryption.py --legacy-wallet',
+    'wallet_encryption.py --descriptors',
     'feature_dersig.py',
     'feature_cltv.py',
     'rpc_uptime.py',
-    'wallet_resendwallettransactions.py',
-    'wallet_fallbackfee.py',
+    'wallet_resendwallettransactions.py --legacy-wallet',
+    'wallet_resendwallettransactions.py --descriptors',
+    'wallet_fallbackfee.py --legacy-wallet',
+    'wallet_fallbackfee.py --descriptors',
+    'rpc_dumptxoutset.py',
     'feature_minchainwork.py',
+    'rpc_estimatefee.py',
     'rpc_getblockstats.py',
-    'wallet_create_tx.py',
+    'wallet_create_tx.py --legacy-wallet',
+    'wallet_send.py --legacy-wallet',
+    'wallet_send.py --descriptors',
+    'wallet_create_tx.py --descriptors',
+    'wallet_taproot.py',
     'p2p_fingerprint.py',
     'feature_uacomment.py',
-    'wallet_coinbase_category.py',
+    'wallet_coinbase_category.py --legacy-wallet',
+    'wallet_coinbase_category.py --descriptors',
     'feature_filelock.py',
+    'feature_loadblock.py',
+    'p2p_dos_header_tree.py',
+    'p2p_add_connections.py',
     'p2p_unrequested_blocks.py',
+    'p2p_blockfilters.py',
+    'p2p_message_capture.py',
     'feature_includeconf.py',
+    'feature_addrman.py',
+    'feature_asmap.py',
+    'mempool_unbroadcast.py',
+    'mempool_compatibility.py',
+    'mempool_accept_wtxid.py',
     'rpc_deriveaddresses.py',
     'rpc_deriveaddresses.py --usecli',
+    'p2p_ping.py',
     'rpc_scantxoutset.py',
     'feature_logging.py',
+    'feature_anchors.py',
+    'feature_coinstatsindex.py',
+    'wallet_orphanedreward.py',
     'p2p_node_network_limited.py',
+    'p2p_permissions.py',
     'feature_blocksdir.py',
+    'wallet_startup.py',
+    'p2p_i2p_ports.py',
     'feature_config_args.py',
+    'feature_presegwit_node_upgrade.py',
+    'feature_settings.py',
+    'rpc_getdescriptorinfo.py',
     'rpc_help.py',
     'feature_help.py',
     'feature_shutdown.py',
+    'p2p_ibd_txrelay.py',
+    'feature_blockfilterindex_prune.py'
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]
@@ -221,6 +336,7 @@ def main():
                                      epilog='''
     Help text and arguments for individual test script:''',
                                      formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('--ansi', action='store_true', default=sys.stdout.isatty(), help="Use ANSI colors and dots in output (enabled by default when standard output is a TTY)")
     parser.add_argument('--combinedlogslen', '-c', type=int, default=0, metavar='n', help='On failure, print a log (of length n lines) to the console, combined from the test framework and all test nodes.')
     parser.add_argument('--coverage', action='store_true', help='generate a basic coverage report for the RPC interface')
     parser.add_argument('--ci', action='store_true', help='Run checks and code that are usually only enabled in a continuous integration environment')
@@ -232,7 +348,15 @@ def main():
     parser.add_argument('--quiet', '-q', action='store_true', help='only print dots, results summary and failure logs')
     parser.add_argument('--tmpdirprefix', '-t', default=tempfile.gettempdir(), help="Root directory for datadirs")
     parser.add_argument('--failfast', action='store_true', help='stop execution after the first test failure')
+    parser.add_argument('--filter', help='filter scripts to run by regular expression')
+
     args, unknown_args = parser.parse_known_args()
+    if not args.ansi:
+        global BOLD, GREEN, RED, GREY
+        BOLD = ("", "")
+        GREEN = ("", "")
+        RED = ("", "")
+        GREY = ("", "")
 
     # args to be passed on always start with two dashes; tests are the remaining unknown args
     tests = [arg for arg in unknown_args if arg[:2] != "--"]
@@ -267,11 +391,23 @@ def main():
     test_list = []
     if tests:
         # Individual tests have been specified. Run specified tests that exist
-        # in the ALL_SCRIPTS list. Accept the name with or without .py extension.
-        tests = [test + ".py" if ".py" not in test else test for test in tests]
+        # in the ALL_SCRIPTS list. Accept names with or without a .py extension.
+        # Specified tests can contain wildcards, but in that case the supplied
+        # paths should be coherent, e.g. the same path as that provided to call
+        # test_runner.py. Examples:
+        #   `test/functional/test_runner.py test/functional/wallet*`
+        #   `test/functional/test_runner.py ./test/functional/wallet*`
+        #   `test_runner.py wallet*`
+        #   but not:
+        #   `test/functional/test_runner.py wallet*`
+        # Multiple wildcards can be passed:
+        #   `test_runner.py tool* mempool*`
         for test in tests:
-            if test in ALL_SCRIPTS:
-                test_list.append(test)
+            script = test.split("/")[-1]
+            script = script + ".py" if ".py" not in script else script
+            matching_scripts = [s for s in ALL_SCRIPTS if s.startswith(script)]
+            if matching_scripts:
+                test_list.extend(matching_scripts)
             else:
                 print("{}WARNING!{} Test '{}' not found in full test list.".format(BOLD[1], BOLD[0], test))
     elif args.extended:
@@ -291,6 +427,9 @@ def main():
                 test_list.remove(exclude_item)
             if not exclude_list:
                 print("{}WARNING!{} Test '{}' not found in current test list.".format(BOLD[1], BOLD[0], exclude_test))
+
+    if args.filter:
+        test_list = list(filter(re.compile(args.filter).search, test_list))
 
     if not test_list:
         print("No valid test scripts specified. Check that your test is in one "
@@ -319,23 +458,35 @@ def main():
         args=passon_args,
         combined_logs_len=args.combinedlogslen,
         failfast=args.failfast,
-        runs_ci=args.ci,
+        use_term_control=args.ansi,
     )
 
-def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=False, args=None, combined_logs_len=0, failfast=False, runs_ci):
+def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=False, args=None, combined_logs_len=0, failfast=False, use_term_control):
     args = args or []
 
-    # Warn if bitcoind is already running (unix only)
+    # Warn if bitcoind is already running
     try:
-        if subprocess.check_output(["pidof", "bitcoind"]) is not None:
+        # pgrep exits with code zero when one or more matching processes found
+        if subprocess.run(["pgrep", "-x", "bitcoind"], stdout=subprocess.DEVNULL).returncode == 0:
             print("%sWARNING!%s There is already a bitcoind process running on this system. Tests may fail unexpectedly due to resource contention!" % (BOLD[1], BOLD[0]))
-    except (OSError, subprocess.SubprocessError):
+    except OSError:
+        # pgrep not supported
         pass
 
     # Warn if there is a cache directory
     cache_dir = "%s/test/cache" % build_dir
     if os.path.isdir(cache_dir):
         print("%sWARNING!%s There is a cache directory here: %s. If tests fail unexpectedly, try deleting the cache directory." % (BOLD[1], BOLD[0], cache_dir))
+
+    # Test Framework Tests
+    print("Running Unit Tests for Test Framework Modules")
+    test_framework_tests = unittest.TestSuite()
+    for module in TEST_FRAMEWORK_MODULES:
+        test_framework_tests.addTest(unittest.TestLoader().loadTestsFromName("test_framework.{}".format(module)))
+    result = unittest.TextTestRunner(verbosity=1, failfast=True).run(test_framework_tests)
+    if not result.wasSuccessful():
+        logging.debug("Early exiting after failure in TestFramework unit tests")
+        sys.exit(False)
 
     tests_dir = src_dir + '/test/functional/'
 
@@ -363,7 +514,7 @@ def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=
         tmpdir=tmpdir,
         test_list=test_list,
         flags=flags,
-        timeout_duration=40 * 60 if runs_ci else float('inf'),  # in seconds
+        use_term_control=use_term_control,
     )
     start_time = time.time()
     test_results = []
@@ -401,20 +552,24 @@ def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=
     print_results(test_results, max_len_name, (int(time.time() - start_time)))
 
     if coverage:
-        coverage.report_rpc_coverage()
+        coverage_passed = coverage.report_rpc_coverage()
 
         logging.debug("Cleaning up coverage data")
         coverage.cleanup()
+    else:
+        coverage_passed = True
 
     # Clear up the temp directory if all subdirectories are gone
     if not os.listdir(tmpdir):
         os.rmdir(tmpdir)
 
-    all_passed = all(map(lambda test_result: test_result.was_successful, test_results))
+    all_passed = all(map(lambda test_result: test_result.was_successful, test_results)) and coverage_passed
 
-    # This will be a no-op unless failfast is True in which case there may be dangling
-    # processes which need to be killed.
-    job_queue.kill_and_join()
+    # Clean up dangling processes if any. This may only happen with --failfast option.
+    # Killing the process group will also terminate the current process but that is
+    # not an issue
+    if len(job_queue.jobs):
+        os.killpg(os.getpgid(0), signal.SIGKILL)
 
     sys.exit(not all_passed)
 
@@ -445,16 +600,16 @@ class TestHandler:
     Trigger the test scripts passed in via the list.
     """
 
-    def __init__(self, *, num_tests_parallel, tests_dir, tmpdir, test_list, flags, timeout_duration):
+    def __init__(self, *, num_tests_parallel, tests_dir, tmpdir, test_list, flags, use_term_control):
         assert num_tests_parallel >= 1
         self.num_jobs = num_tests_parallel
         self.tests_dir = tests_dir
         self.tmpdir = tmpdir
-        self.timeout_duration = timeout_duration
         self.test_list = test_list
         self.flags = flags
         self.num_running = 0
         self.jobs = []
+        self.use_term_control = use_term_control
 
     def get_next(self):
         while self.num_running < self.num_jobs and self.test_list:
@@ -490,9 +645,6 @@ class TestHandler:
             time.sleep(.5)
             for job in self.jobs:
                 (name, start_time, proc, testdir, log_out, log_err) = job
-                if int(time.time() - start_time) > self.timeout_duration:
-                    # In travis, timeout individual tests (to stop tests hanging and not providing useful output).
-                    proc.send_signal(signal.SIGINT)
                 if proc.poll() is not None:
                     log_out.seek(0), log_err.seek(0)
                     [stdout, stderr] = [log_file.read().decode('utf-8') for log_file in (log_out, log_err)]
@@ -505,22 +657,14 @@ class TestHandler:
                         status = "Failed"
                     self.num_running -= 1
                     self.jobs.remove(job)
-                    clearline = '\r' + (' ' * dot_count) + '\r'
-                    print(clearline, end='', flush=True)
+                    if self.use_term_control:
+                        clearline = '\r' + (' ' * dot_count) + '\r'
+                        print(clearline, end='', flush=True)
                     dot_count = 0
                     return TestResult(name, status, int(time.time() - start_time)), testdir, stdout, stderr
-            print('.', end='', flush=True)
+            if self.use_term_control:
+                print('.', end='', flush=True)
             dot_count += 1
-
-    def kill_and_join(self):
-        """Send SIGKILL to all jobs and block until all have ended."""
-        procs = [i[2] for i in self.jobs]
-
-        for proc in procs:
-            proc.kill()
-
-        for proc in procs:
-            proc.wait()
 
 
 class TestResult():
@@ -559,7 +703,7 @@ class TestResult():
 def check_script_prefixes():
     """Check that test scripts start with one of the allowed name prefixes."""
 
-    good_prefixes_re = re.compile("(example|feature|interface|mempool|mining|p2p|rpc|wallet|tool)_")
+    good_prefixes_re = re.compile("^(example|feature|interface|mempool|mining|p2p|rpc|wallet|tool)_")
     bad_script_names = [script for script in ALL_SCRIPTS if good_prefixes_re.match(script) is None]
 
     if bad_script_names:
@@ -579,7 +723,7 @@ def check_script_list(*, src_dir, fail_on_warn):
     if len(missed_tests) != 0:
         print("%sWARNING!%s The following scripts are not being run: %s. Check the test lists in test_runner.py." % (BOLD[1], BOLD[0], str(missed_tests)))
         if fail_on_warn:
-            # On travis this warning is an error to prevent merging incomplete commits into master
+            # On CI this warning is an error to prevent merging incomplete commits into master
             sys.exit(1)
 
 
@@ -612,8 +756,10 @@ class RPCCoverage():
         if uncovered:
             print("Uncovered RPC commands:")
             print("".join(("  - %s\n" % command) for command in sorted(uncovered)))
+            return False
         else:
             print("All RPC commands covered.")
+            return True
 
     def cleanup(self):
         return shutil.rmtree(self.dir)
@@ -623,14 +769,16 @@ class RPCCoverage():
         Return a set of currently untested RPC commands.
 
         """
-        # This is shared from `test/functional/test-framework/coverage.py`
+        # This is shared from `test/functional/test_framework/coverage.py`
         reference_filename = 'rpc_interface.txt'
         coverage_file_prefix = 'coverage.'
 
         coverage_ref_filename = os.path.join(self.dir, reference_filename)
         coverage_filenames = set()
         all_cmds = set()
-        covered_cmds = set()
+        # Consider RPC generate covered, because it is overloaded in
+        # test_framework/test_node.py and not seen by the coverage check.
+        covered_cmds = set({'generate'})
 
         if not os.path.isfile(coverage_ref_filename):
             raise RuntimeError("No coverage reference found")

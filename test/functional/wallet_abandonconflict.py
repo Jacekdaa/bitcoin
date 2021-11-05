@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2019 The Bitcoin Core developers
+# Copyright (c) 2014-2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the abandontransaction RPC.
@@ -12,12 +12,11 @@
 """
 from decimal import Decimal
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
-    connect_nodes,
-    disconnect_nodes,
 )
 
 
@@ -30,14 +29,14 @@ class AbandonConflictTest(BitcoinTestFramework):
         self.skip_if_no_wallet()
 
     def run_test(self):
-        self.nodes[1].generate(100)
+        self.generate(self.nodes[1], COINBASE_MATURITY)
         self.sync_blocks()
         balance = self.nodes[0].getbalance()
         txA = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), Decimal("10"))
         txB = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), Decimal("10"))
         txC = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), Decimal("10"))
         self.sync_mempools()
-        self.nodes[1].generate(1)
+        self.generate(self.nodes[1], 1)
 
         # Can not abandon non-wallet transaction
         assert_raises_rpc_error(-5, 'Invalid or non-wallet transaction id', lambda: self.nodes[0].abandontransaction(txid='ff' * 32))
@@ -50,7 +49,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         balance = newbalance
 
         # Disconnect nodes so node0's transactions don't get into node1's mempool
-        disconnect_nodes(self.nodes[0], 1)
+        self.disconnect_nodes(0, 1)
 
         # Identify the 10btc outputs
         nA = next(tx_out["vout"] for tx_out in self.nodes[0].gettransaction(txA)["details"] if tx_out["amount"] == Decimal("10"))
@@ -95,8 +94,8 @@ class AbandonConflictTest(BitcoinTestFramework):
 
         # Restart the node with a higher min relay fee so the parent tx is no longer in mempool
         # TODO: redo with eviction
-        self.stop_node(0)
-        self.start_node(0, extra_args=["-minrelaytxfee=0.0001"])
+        self.restart_node(0, extra_args=["-minrelaytxfee=0.0001"])
+        assert self.nodes[0].getmempoolinfo()['loaded']
 
         # Verify txs no longer in either node's mempool
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
@@ -108,8 +107,8 @@ class AbandonConflictTest(BitcoinTestFramework):
         assert_equal(newbalance, balance - signed3_change)
         # Unconfirmed received funds that are not in mempool, also shouldn't show
         # up in unconfirmed balance
-        unconfbalance = self.nodes[0].getunconfirmedbalance() + self.nodes[0].getbalance()
-        assert_equal(unconfbalance, newbalance)
+        balances = self.nodes[0].getbalances()['mine']
+        assert_equal(balances['untrusted_pending'] + balances['trusted'], newbalance)
         # Also shouldn't show up in listunspent
         assert not txABC2 in [utxo["txid"] for utxo in self.nodes[0].listunspent(0)]
         balance = newbalance
@@ -121,9 +120,18 @@ class AbandonConflictTest(BitcoinTestFramework):
         assert_equal(newbalance, balance + Decimal("30"))
         balance = newbalance
 
+        self.log.info("Check abandoned transactions in listsinceblock")
+        listsinceblock = self.nodes[0].listsinceblock()
+        txAB1_listsinceblock = [d for d in listsinceblock['transactions'] if d['txid'] == txAB1 and d['category'] == 'send']
+        for tx in txAB1_listsinceblock:
+            assert_equal(tx['abandoned'], True)
+            assert_equal(tx['confirmations'], 0)
+            assert_equal(tx['trusted'], False)
+
         # Verify that even with a low min relay fee, the tx is not reaccepted from wallet on startup once abandoned
-        self.stop_node(0)
-        self.start_node(0, extra_args=["-minrelaytxfee=0.00001"])
+        self.restart_node(0, extra_args=["-minrelaytxfee=0.00001"])
+        assert self.nodes[0].getmempoolinfo()['loaded']
+
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
         assert_equal(self.nodes[0].getbalance(), balance)
 
@@ -142,13 +150,14 @@ class AbandonConflictTest(BitcoinTestFramework):
         balance = newbalance
 
         # Remove using high relay fee again
-        self.stop_node(0)
-        self.start_node(0, extra_args=["-minrelaytxfee=0.0001"])
+        self.restart_node(0, extra_args=["-minrelaytxfee=0.0001"])
+        assert self.nodes[0].getmempoolinfo()['loaded']
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
         newbalance = self.nodes[0].getbalance()
         assert_equal(newbalance, balance - Decimal("24.9996"))
         balance = newbalance
 
+        self.log.info("Test transactions conflicted by a double spend")
         # Create a double spend of AB1 by spending again from only A's 10 output
         # Mine double spend from node 1
         inputs = []
@@ -158,10 +167,38 @@ class AbandonConflictTest(BitcoinTestFramework):
         tx = self.nodes[0].createrawtransaction(inputs, outputs)
         signed = self.nodes[0].signrawtransactionwithwallet(tx)
         self.nodes[1].sendrawtransaction(signed["hex"])
-        self.nodes[1].generate(1)
+        self.generate(self.nodes[1], 1)
 
-        connect_nodes(self.nodes[0], 1)
+        self.connect_nodes(0, 1)
         self.sync_blocks()
+
+        tx_list = self.nodes[0].listtransactions()
+
+        conflicted = [tx for tx in tx_list if tx["confirmations"] < 0]
+        assert_equal(4, len(conflicted))
+
+        wallet_conflicts = [tx for tx in conflicted if tx["walletconflicts"]]
+        assert_equal(2, len(wallet_conflicts))
+
+        double_spends = [tx for tx in tx_list if tx["walletconflicts"] and tx["confirmations"] > 0]
+        assert_equal(1, len(double_spends))
+        double_spend = double_spends[0]
+
+        # Test the properties of the conflicted transactions, i.e. with confirmations < 0.
+        for tx in conflicted:
+            assert_equal(tx["abandoned"], False)
+            assert_equal(tx["confirmations"], -1)
+            assert_equal(tx["trusted"], False)
+
+        # Test the properties of the double-spend transaction, i.e. having wallet conflicts and confirmations > 0.
+        assert_equal(double_spend["abandoned"], False)
+        assert_equal(double_spend["confirmations"], 1)
+        assert "trusted" not in double_spend.keys()  # "trusted" only returned if tx has 0 or negative confirmations.
+
+        # Test the walletconflicts field of each.
+        for tx in wallet_conflicts:
+            assert_equal(double_spend["walletconflicts"], [tx["txid"]])
+            assert_equal(tx["walletconflicts"], [double_spend["txid"]])
 
         # Verify that B and C's 10 BTC outputs are available for spending again because AB1 is now conflicted
         newbalance = self.nodes[0].getbalance()
@@ -176,7 +213,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         #assert_equal(newbalance, balance - Decimal("10"))
         self.log.info("If balance has not declined after invalidateblock then out of mempool wallet tx which is no longer")
         self.log.info("conflicted has not resumed causing its inputs to be seen as spent.  See Issue #7315")
-        self.log.info(str(balance) + " -> " + str(newbalance) + " ?")
+        assert_equal(balance, newbalance)
 
 
 if __name__ == '__main__':

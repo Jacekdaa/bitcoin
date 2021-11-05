@@ -1,7 +1,7 @@
 // Copyright 2014 BitPay Inc.
 // Copyright 2015 Bitcoin Core Developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://opensource.org/licenses/mit-license.php.
 
 #ifndef __UNIVALUE_H__
 #define __UNIVALUE_H__
@@ -13,8 +13,6 @@
 #include <vector>
 #include <map>
 #include <cassert>
-
-#include <sstream>        // .get_int64()
 
 class UniValue {
 public:
@@ -47,7 +45,6 @@ public:
         std::string s(val_);
         setStr(s);
     }
-    ~UniValue() {}
 
     void clear();
 
@@ -101,6 +98,10 @@ public:
         UniValue tmpVal(val_);
         return push_back(tmpVal);
     }
+    bool push_back(bool val_) {
+        UniValue tmpVal(val_);
+        return push_back(tmpVal);
+    }
     bool push_back(int val_) {
         UniValue tmpVal(val_);
         return push_back(tmpVal);
@@ -130,7 +131,7 @@ public:
         return pushKV(key, tmpVal);
     }
     bool pushKV(const std::string& key, bool val_) {
-        UniValue tmpVal((bool)val_);
+        UniValue tmpVal(val_);
         return pushKV(key, tmpVal);
     }
     bool pushKV(const std::string& key, int val_) {

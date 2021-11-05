@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Bitcoin Core developers
+// Copyright (c) 2018-2020 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,41 +7,48 @@
 #include <boost/test/unit_test.hpp>
 
 #include <fs.h>
-#include <test/setup_common.h>
-#include <wallet/db.h>
+#include <test/util/setup_common.h>
+#include <wallet/bdb.h>
 
 
 BOOST_FIXTURE_TEST_SUITE(db_tests, BasicTestingSetup)
 
+static std::shared_ptr<BerkeleyEnvironment> GetWalletEnv(const fs::path& path, std::string& database_filename)
+{
+    fs::path data_file = BDBDataFile(path);
+    database_filename = fs::PathToString(data_file.filename());
+    return GetBerkeleyEnv(data_file.parent_path());
+}
+
 BOOST_AUTO_TEST_CASE(getwalletenv_file)
 {
     std::string test_name = "test_name.dat";
-    fs::path datadir = SetDataDir("tempdir");
+    const fs::path datadir = gArgs.GetDataDirNet();
     fs::path file_path = datadir / test_name;
-    std::ofstream f(file_path.BOOST_FILESYSTEM_C_STR);
+    fs::ofstream f(file_path);
     f.close();
 
     std::string filename;
     std::shared_ptr<BerkeleyEnvironment> env = GetWalletEnv(file_path, filename);
-    BOOST_CHECK(filename == test_name);
-    BOOST_CHECK(env->Directory() == datadir);
+    BOOST_CHECK_EQUAL(filename, test_name);
+    BOOST_CHECK_EQUAL(env->Directory(), datadir);
 }
 
 BOOST_AUTO_TEST_CASE(getwalletenv_directory)
 {
     std::string expected_name = "wallet.dat";
-    fs::path datadir = SetDataDir("tempdir");
+    const fs::path datadir = gArgs.GetDataDirNet();
 
     std::string filename;
     std::shared_ptr<BerkeleyEnvironment> env = GetWalletEnv(datadir, filename);
-    BOOST_CHECK(filename == expected_name);
-    BOOST_CHECK(env->Directory() == datadir);
+    BOOST_CHECK_EQUAL(filename, expected_name);
+    BOOST_CHECK_EQUAL(env->Directory(), datadir);
 }
 
 BOOST_AUTO_TEST_CASE(getwalletenv_g_dbenvs_multiple)
 {
-    fs::path datadir = SetDataDir("tempdir");
-    fs::path datadir_2 = SetDataDir("tempdir_2");
+    fs::path datadir = gArgs.GetDataDirNet() / "1";
+    fs::path datadir_2 = gArgs.GetDataDirNet() / "2";
     std::string filename;
 
     std::shared_ptr<BerkeleyEnvironment> env_1 = GetWalletEnv(datadir, filename);
@@ -54,8 +61,8 @@ BOOST_AUTO_TEST_CASE(getwalletenv_g_dbenvs_multiple)
 
 BOOST_AUTO_TEST_CASE(getwalletenv_g_dbenvs_free_instance)
 {
-    fs::path datadir = SetDataDir("tempdir");
-    fs::path datadir_2 = SetDataDir("tempdir_2");
+    fs::path datadir = gArgs.GetDataDirNet() / "1";
+    fs::path datadir_2 = gArgs.GetDataDirNet() / "2";
     std::string filename;
 
     std::shared_ptr <BerkeleyEnvironment> env_1_a = GetWalletEnv(datadir, filename);
